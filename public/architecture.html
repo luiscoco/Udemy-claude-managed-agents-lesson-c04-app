@@ -1,0 +1,110 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>C04 · Agent Versions and Safe Rollouts</title><link rel="stylesheet" href="/student.css"></head><body><main class="student-shell"><div class="student-brand"><a href="/">How <span>Claude Managed Agents</span> Works</a><span class="student-badge">CONCEPT 04 / 60</span></div><div class="student-hero"><div><div class="student-eyebrow">STUDENT APPLICATION GUIDE</div><h1>Agent Versions and Safe Rollouts</h1><p>Understand the concepts, follow the source code, and verify the application yourself.</p></div><img src="/astronaut.png" alt=""></div><nav class="student-nav" aria-label="Application sections"><a href="/guide.html#learning">What you will learn</a><a href="/guide.html#run-guide">How to run</a><a href="/architecture.html">Architecture &amp; workflow</a><a href="/#application-lab">Application lab</a><button id="student-theme-toggle" type="button" aria-pressed="false">Switch to dark mode</button></nav><section class="student-section"><h2>Step 0 · Prepare the application before the workflow</h2><p>Use your own Anthropic API key and an existing agent ID and environment ID.</p><p>For the optional live path, set your API key, then run <code>npm run setup</code> if you do not already have resource IDs. The script creates the environment before a text-only agent, saves each ID immediately, and reuses IDs already configured. It uses CLAUDE_MODEL or the source default; choose a model available to your account. An uncertain network failure may have created a resource: inspect your account before retrying. The configured agent must have empty tools, mcp_servers and skills; validation rejects other capabilities before creating a session.</p><pre><code>npm ci
+Copy-Item .env.example .env
+npm start</code></pre><p>Set these prerequisites before starting. Credentials stay on the server and are never bundled into the browser.</p><p class="student-source">Source: .env.example · starting at line 1</p><pre><code>ANTHROPIC_API_KEY=your_api_key
+CLAUDE_MANAGED_AGENT_ID=your_agent_id
+CLAUDE_MANAGED_ENVIRONMENT_ID=your_environment_id
+PORT=3004</code></pre><p>Optional prerequisite: create_environment runs before create_agent. Missing IDs are saved in .env; configured IDs are reused. This step is separate from each runtime experiment.</p><p class="student-source">Source: scripts/setup-resources.mts · starting at line 1</p><pre><code>/** Optional one-time provisioning. Reuses IDs already present in .env. */
+import Anthropic from &quot;@anthropic-ai/sdk&quot;;
+import { existsSync, readFileSync, writeFileSync } from &quot;node:fs&quot;;
+if (!process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY.startsWith(&quot;your_&quot;)) {
+  throw new Error(&quot;Set your own ANTHROPIC_API_KEY in .env first.&quot;);
+}
+const client = new Anthropic({ maxRetries: 0 });
+let contents = existsSync(&quot;.env&quot;) ? readFileSync(&quot;.env&quot;, &quot;utf8&quot;) : &quot;&quot;;
+function save(key: string, value: string) {
+  const pattern = new RegExp(&quot;^\\s*&quot; + key + &quot;=.*$&quot;, &quot;m&quot;);
+  contents = pattern.test(contents) ? contents.replace(pattern, key + &quot;=&quot; + value) : contents.trimEnd() + &quot;\n&quot; + key + &quot;=&quot; + value + &quot;\n&quot;;
+  writeFileSync(&quot;.env&quot;, contents, { mode: 0o600 });
+}
+const valid = (value: string | undefined) =&gt; Boolean(value &amp;&amp; !value.startsWith(&quot;your_&quot;));
+if (!valid(process.env.CLAUDE_MANAGED_ENVIRONMENT_ID)) {
+  const environment = await client.beta.environments.create({
+    name: &quot;C04 student environment&quot;,
+    config: { type: &quot;cloud&quot;, networking: { type: &quot;limited&quot; } },
+  });
+  // Save immediately so a later agent failure does not lose the environment ID.
+  save(&quot;CLAUDE_MANAGED_ENVIRONMENT_ID&quot;, environment.id);
+}
+if (!valid(process.env.CLAUDE_MANAGED_AGENT_ID)) {
+  const agent = await client.beta.agents.create({
+    name: &quot;C04 text-only student agent&quot;,
+    model: process.env.CLAUDE_MODEL || &quot;claude-opus-5-5&quot;,
+    system: &quot;Answer the student&#x27;s question clearly and briefly.&quot;,
+    tools: [], mcp_servers: [], skills: [],
+  });
+  save(&quot;CLAUDE_MANAGED_AGENT_ID&quot;, agent.id);
+}
+console.log(&quot;Prerequisite IDs are saved in your local .env. Existing configured IDs were reused.&quot;);</code></pre></section><section class="student-section"><h2>UML sequence diagram</h2><p>Read from top to bottom. Columns are participants; arrows are ordered messages. Open the full-size image or scroll horizontally to read every label.</p><p><a href="/architecture.svg" target="_blank" rel="noopener">Open SVG</a> · <a href="/architecture.svg" download>Download SVG</a> · <a href="/architecture.png" download>Download PNG</a></p><div class="student-diagram"><img src="/architecture.svg" alt="UML sequence diagram showing the actual lesson application workflow"></div></section><section class="student-section"><h2>Walk through the application step by step</h2><article class="student-step"><h3>1 · Submit the browser request · part 1</h3><p>The browser sends a same-origin request and updates the visible evidence. It never receives the API key.</p><p class="student-source">Source: public/app.js · starting at line 1</p><pre><code>const button = document.querySelector(&#x27;#run&#x27;);
+const status = document.querySelector(&#x27;#status&#x27;);
+fetch(&#x27;/api/config&#x27;).then(r =&gt; r.json()).then(config =&gt; { status.textContent = config.configured ? &#x27;Configuration ready. Your API key stays on the server.&#x27; : &#x27;Add your API key and resource IDs to .env before running.&#x27;; button.disabled = !config.configured; }).catch(() =&gt; { status.textContent = &#x27;Could not check configuration.&#x27;; button.disabled = true; });
+button.addEventListener(&#x27;click&#x27;, async () =&gt; {
+  button.disabled = true; status.textContent = &#x27;Inspecting agent and creating session…&#x27;;
+  try {
+    const response = await fetch(&#x27;/api/session&#x27;, { method: &#x27;POST&#x27; }); const data = await response.json();
+    if (!response.ok) throw new Error(data.error || &#x27;Request failed&#x27;);
+    document.querySelector(&#x27;#agent&#x27;).textContent = data.checked.id;
+    document.querySelector(&#x27;#version&#x27;).textContent = String(data.checked.version);
+    document.querySelector(&#x27;#session&#x27;).textContent = data.session.id;
+    document.querySelector(&#x27;#sessionVersion&#x27;).textContent = String(data.session.agentVersion);
+    document.querySelector(&#x27;#environment&#x27;).textContent = data.environmentId;
+    document.querySelector(&#x27;#empty&#x27;).hidden = true; document.querySelector(&#x27;#result&#x27;).hidden = false;
+    const matches = data.checked.id === data.session.agentId &amp;&amp; data.checked.version === data.session.agentVersion;
+    document.querySelector(&#x27;.success&#x27;).textContent = matches ? &#x27;✓ The session uses the inspected base version.&#x27; : &#x27;The session does not match the checked agent. Investigate before using it.&#x27;;
+    status.textContent = &#x27;Session created.&#x27;;
+  } catch (error) { status.textContent = error.message; }
+  finally { button.disabled = false; }
+});</code></pre></article><article class="student-step"><h3>2 · Execute the provider workflow · part 1</h3><p>The Node host validates input, uses configured resources, and returns observable evidence. Read the stream ordering and failure branches.</p><p class="student-source">Source: src/server.ts · starting at line 1</p><pre><code>import { serveStudentAsset } from &quot;./student-assets&quot;;
+import http from &quot;node:http&quot;;
+import { readFile } from &quot;node:fs/promises&quot;;
+import path from &quot;node:path&quot;;
+import { existsSync } from &quot;node:fs&quot;;
+import Anthropic from &quot;@anthropic-ai/sdk&quot;;
+import { createPinnedSession } from &quot;./release&quot;;
+
+if (existsSync(&quot;.env&quot;)) process.loadEnvFile(&quot;.env&quot;);
+const port = Number(process.env.PORT || 3004);
+const agentId = process.env.CLAUDE_MANAGED_AGENT_ID || &quot;&quot;;
+const environmentId = process.env.CLAUDE_MANAGED_ENVIRONMENT_ID || &quot;&quot;;
+const apiKey = process.env.ANTHROPIC_API_KEY || &quot;&quot;;
+const configured = [agentId, environmentId, apiKey].every(v =&gt; v &amp;&amp; !v.startsWith(&quot;your_&quot;));
+const server = http.createServer(async (req, res) =&gt; {
+  res.setHeader(&quot;Cache-Control&quot;, &quot;no-store&quot;);
+  try {
+    if (await serveStudentAsset(req, res)) return;
+    if (req.method === &quot;GET&quot; &amp;&amp; req.url === &quot;/api/config&quot;) {
+      res.writeHead(200, { &quot;Content-Type&quot;: &quot;application/json&quot; }); res.end(JSON.stringify({ configured })); return;
+    }
+    if (req.method === &quot;POST&quot; &amp;&amp; req.url === &quot;/api/session&quot;) {
+      if (req.headers.origin &amp;&amp; req.headers.origin !== `http://127.0.0.1:${port}` &amp;&amp; req.headers.origin !== `http://localhost:${port}`) { res.writeHead(403); res.end(); return; }
+      if (!configured) throw new Error(&quot;Configure the API key, agent ID and environment ID in .env.&quot;);
+      const result = await createPinnedSession(new Anthropic({ apiKey }), agentId, environmentId);
+      res.writeHead(200, { &quot;Content-Type&quot;: &quot;application/json&quot; }); res.end(JSON.stringify(result)); return;
+    }
+    const files: Record&lt;string, string&gt; = { &quot;/&quot;: &quot;index.html&quot;, &quot;/style.css&quot;: &quot;style.css&quot;, &quot;/app.js&quot;: &quot;app.js&quot;, &quot;/astronaut.png&quot;: &quot;astronaut.png&quot; };</code></pre></article><article class="student-step"><h3>2 · Execute the provider workflow · part 2</h3><p>The Node host validates input, uses configured resources, and returns observable evidence. Read the stream ordering and failure branches.</p><p class="student-source">Source: src/server.ts · starting at line 29</p><pre><code>    if (req.method === &quot;GET&quot; &amp;&amp; req.url &amp;&amp; files[req.url]) {
+      const file = files[req.url]; const content = await readFile(path.join(__dirname, &quot;..&quot;, &quot;public&quot;, file));
+      res.writeHead(200, { &quot;Content-Type&quot;: file.endsWith(&quot;.png&quot;) ? &quot;image/png&quot; : file.endsWith(&quot;.css&quot;) ? &quot;text/css&quot; : file.endsWith(&quot;.js&quot;) ? &quot;text/javascript&quot; : &quot;text/html; charset=utf-8&quot; }); res.end(content); return;
+    }
+    res.writeHead(404); res.end(&quot;Not found&quot;);
+  } catch (error) {
+    res.writeHead(500, { &quot;Content-Type&quot;: &quot;application/json&quot; }); res.end(JSON.stringify({ error: error instanceof Error ? error.message : &quot;Request failed&quot; }));
+  }
+});
+server.listen(port, &quot;127.0.0.1&quot;, () =&gt; console.log(`Open http://127.0.0.1:${port}`));</code></pre></article><article class="student-step"><h3>3 · Understand the lesson-specific rules · part 1</h3><p>Retrieves and validates a real text-only agent, then creates a session pinned to the checked version. This app does not send a prompt or implement a deployment service.</p><p class="student-source">Source: src/release.ts · starting at line 1</p><pre><code>import Anthropic from &quot;@anthropic-ai/sdk&quot;;
+
+export type Snapshot = { id: string; version: number; tools: unknown[]; mcp_servers: unknown[]; skills: unknown[] };
+export function validate(agent: Snapshot): void {
+  if (!agent.id || !Number.isInteger(agent.version) || agent.version &lt; 1) throw new Error(&quot;Agent ID and version are required.&quot;);
+  for (const field of [&quot;tools&quot;, &quot;mcp_servers&quot;, &quot;skills&quot;] as const) {
+    if (!Array.isArray(agent[field]) || agent[field].length !== 0) throw new Error(`Expected an empty ${field} list.`);
+  }
+}
+export async function createPinnedSession(client: Anthropic, agentId: string, environmentId: string) {
+  const checked = await client.beta.agents.retrieve(agentId);
+  validate(checked);
+  const session = await client.beta.sessions.create({
+    agent: { type: &quot;agent&quot;, id: checked.id, version: checked.version },
+    environment_id: environmentId,
+    budget: { type: &quot;limit&quot;, max_list_cost: { currency: &quot;USD&quot;, amount: &quot;50&quot; } },
+  });
+  return { checked: { id: checked.id, version: checked.version, model: checked.model }, session: { id: session.id, agentId: session.agent.id, agentVersion: session.agent.version }, environmentId };
+}</code></pre></article></section><section class="student-section"><h2>What the evidence proves</h2><p class="student-note">Retrieves and validates a real text-only agent, then creates a session pinned to the checked version. This app does not send a prompt or implement a deployment service.</p><p>Check the displayed outcome and source together. A rendered answer alone does not prove that a tool ran, a remote operation succeeded, or work was cancelled.</p></section><footer>LESSON C04 · LEARN → CONFIGURE → RUN → VERIFY<p><a href="/guide.html#learning">Learning goals</a> · <a href="/guide.html#run-guide">Run instructions</a> · <a href="/architecture.html">Workflow</a> · <a href="/#application-lab">Lab</a></p></footer></main><script src="/navigation.js"></script></body></html>

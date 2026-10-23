@@ -42,37 +42,62 @@ CLAUDE_MANAGED_ENVIRONMENT_ID=your_environment_id
 PORT=3004
 ```
 
-## How the application was developed
+## How the app was build
 
-The browser collects inputs; the Node host validates requests; the lesson implementation produces observable evidence. The architecture page walks through the real source with numbered steps, prerequisite configuration, source filenames and code excerpts.
+### 1. Reject unreviewed capabilities
 
-### Lesson implementation
+The snapshot must have a valid ID and positive version, with empty tools, MCP servers and skills. Any unexpected capability stops the flow before a session is created.
 
-[src/release.ts](https://github.com/luiscoco/Udemy-claude-managed-agents-lesson-c04-app/blob/main/src/release.ts)
+Source: [src/release.ts](src/release.ts#L4)
 
 ```typescript
-import Anthropic from "@anthropic-ai/sdk";
-
-export type Snapshot = { id: string; version: number; tools: unknown[]; mcp_servers: unknown[]; skills: unknown[] };
 export function validate(agent: Snapshot): void {
-  if (!agent.id || !Number.isInteger(agent.version) || agent.version < 1) throw new Error("Agent ID and version are required.");
+  if (!agent.id || !Number.isInteger(agent.version) || agent.version < 1)
+    throw new Error("Agent ID and version are required.");
   for (const field of ["tools", "mcp_servers", "skills"] as const) {
-    if (!Array.isArray(agent[field]) || agent[field].length !== 0) throw new Error(`Expected an empty ${field} list.`);
+    if (!Array.isArray(agent[field]) || agent[field].length !== 0)
+      throw new Error(`Expected an empty ${field} list.`);
   }
-}
-export async function createPinnedSession(client: Anthropic, agentId: string, environmentId: string) {
-  const checked = await client.beta.agents.retrieve(agentId);
-  validate(checked);
-  const session = await client.beta.sessions.create({
-    agent: { type: "agent", id: checked.id, version: checked.version },
-    environment_id: environmentId,
-    budget: { type: "limit", max_list_cost: { currency: "USD", amount: "50" } },
-  });
-  return { checked: { id: checked.id, version: checked.version, model: checked.model }, session: { id: session.id, agentId: session.agent.id, agentVersion: session.agent.version }, environmentId };
 }
 ```
 
-Read the architecture page for the remaining source excerpts and explanations, including input handling and optional provider behavior. The diagram describes this application, rather than implying that an external integration has been implemented.
+### 2. Pin the exact version that passed validation
+
+The host retrieves a snapshot, validates it, and references checked.id plus checked.version in session creation. It does not ask for an unspecified latest version after the check.
+
+Source: [src/release.ts](src/release.ts#L11) · selected statements
+
+```typescript
+const checked = await client.beta.agents.retrieve(agentId);
+
+// ... other source statements omitted ...
+validate(checked);
+
+// ... other source statements omitted ...
+const session = await client.beta.sessions.create({
+  agent: { type: "agent", id: checked.id, version: checked.version },
+  environment_id: environmentId,
+  budget: { type: "limit", max_list_cost: { currency: "USD", amount: "50" } },
+});
+```
+
+### 3. Compare the session release record
+
+The result returns both checked and resolved session versions so the UI can compare them. The sample creates a session; it does not send a model prompt or deploy an agent service.
+
+Source: [src/release.ts](src/release.ts#L18)
+
+```typescript
+return {
+  checked: { id: checked.id, version: checked.version, model: checked.model },
+  session: {
+    id: session.id,
+    agentId: session.agent.id,
+    agentVersion: session.agent.version,
+  },
+  environmentId,
+};
+```
 
 ## Validation
 
